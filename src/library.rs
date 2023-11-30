@@ -5,10 +5,10 @@ use std::rc::Rc;
 use bip39::{Language, Mnemonic};
 use chainql_core::address::{SignatureSchema, Ss58Format};
 use jrsonnet_evaluator::manifest::JsonFormat;
-use jrsonnet_evaluator::typed::{CheckType, ComplexValType, Either2, Either3, Typed, ValType};
+use jrsonnet_evaluator::typed::{Either3, Typed};
 use jrsonnet_evaluator::{bail, runtime_error, Either, ObjValue};
 use jrsonnet_evaluator::{
-	error::{ErrorKind::RuntimeError, Result},
+	error::Result,
 	function::{builtin, FuncVal, TlaArg},
 	gc::GcHashMap,
 	parser::Source,
@@ -155,24 +155,9 @@ pub fn builtin_process_spec(
 	})
 }
 
-pub struct AliasName(String);
-impl Typed for AliasName {
-	const TYPE: &'static ComplexValType = &ComplexValType::Simple(ValType::Str);
-
-	fn into_untyped(typed: Self) -> Result<Val> {
-		Ok(Val::string(format!("alias!{}", typed.0)))
-	}
-
-	fn from_untyped(untyped: Val) -> Result<Self> {
-		let Val::Str(s) = untyped else {
-			bail!("alias should be string")
-		};
-		let s = s.into_flat();
-		let Some(name) = s.strip_prefix("alias!") else {
-			bail!("alias string should start with alias!");
-		};
-		Ok(Self(name.to_owned()))
-	}
+#[derive(Typed)]
+pub struct AliasName {
+	alias: String,
 }
 
 #[builtin(fields(
@@ -182,7 +167,7 @@ impl Typed for AliasName {
 pub fn builtin_ensure_keys(
 	this: &builtin_ensure_keys,
 	path: String,
-	wanted_keys: BTreeMap<String, Either![SignatureSchema, ObjValue]>,
+	wanted_keys: BTreeMap<String, Either![SignatureSchema, AliasName, ObjValue]>,
 	format: Option<Ss58Format>,
 ) -> Result<Val> {
 	#[derive(Default, Typed)]
@@ -212,8 +197,8 @@ pub fn builtin_ensure_keys(
 
 	for (name, scheme) in &wanted_keys {
 		if let Some(ty) = name.strip_prefix('_') {
-			let Either2::A(scheme) = scheme else {
-				bail!("scheme should be string-based");
+			let Either3::A(scheme) = scheme else {
+				bail!("wallet scheme should be string-based: {name}");
 			};
 			if secrets.get_wallet(&path, ty, *scheme, format)?.is_none() {
 				let suri = Mnemonic::generate_in(Language::English, 24)
@@ -232,21 +217,40 @@ pub fn builtin_ensure_keys(
 		{
 			// Key set, i.e `sessionKeys`, pass.
 		} else {
-			let Either2::A(scheme) = scheme else {
-				bail!("scheme should be string-based");
+			if matches!(scheme, Either3::B(_)) {
+				continue;
+			};
+			let Either3::A(scheme) = scheme else {
+				bail!("secret scheme should be string-based: {name}");
 			};
 			if secrets.get_typed(&path, name, *scheme, format)?.is_none() {
 				let suri = Mnemonic::generate_in(Language::English, 12)
 					.unwrap()
 					.to_string();
 				secrets.store_typed_key(&path, name, *scheme, &suri, format)?;
+				for (alias_name, alias) in &wanted_keys {
+					let Either3::B(alias) = alias else {
+						continue;
+					};
+					if &alias.alias != name {
+						continue;
+					};
+					secrets.store_typed_key(&path, alias_name, *scheme, &suri, format)?;
+				}
 			}
-			out.keys.insert(
-				name.clone(),
-				secrets
-					.get_typed(&path, name, *scheme, format)?
-					.expect("just inserted"),
-			);
+			let stored = secrets
+				.get_typed(&path, name, *scheme, format)?
+				.expect("just inserted");
+			out.keys.insert(name.clone(), stored.clone());
+			for (alias_name, alias) in &wanted_keys {
+				let Either3::B(alias) = alias else {
+					continue;
+				};
+				if &alias.alias != name {
+					continue;
+				};
+				out.keys.insert(alias_name.clone(), stored.clone());
+			}
 		}
 	}
 	// TODO: Remove the requirement
@@ -257,31 +261,6 @@ pub fn builtin_ensure_keys(
 		.local_node_file(&path)?
 		.ok_or_else(|| runtime_error!("local node file required"))?;
 	Keys::into_untyped(out)
-}
-
-// TODO: Move to cql
-
-#[derive(PartialOrd, Ord, PartialEq, Eq)]
-struct Hex(Vec<u8>);
-impl Typed for Hex {
-	const TYPE: &'static ComplexValType = &ComplexValType::Simple(ValType::Str);
-
-	fn into_untyped(typed: Self) -> Result<Val> {
-		let mut out = vec![0; typed.0.len() * 2 + 2];
-		out[1] = b'x';
-		hex::encode_to_slice(&typed.0, &mut out[2..]).expect("valid buffer");
-		Ok(Val::Str(String::from_utf8(out).expect("valid hex").into()))
-	}
-
-	fn from_untyped(untyped: Val) -> Result<Self> {
-		Self::TYPE.check(&untyped)?;
-		let str = untyped.as_str().expect("is string");
-		if str.starts_with("0x") {
-			bail!("hex string should start with 0x");
-		}
-		let data = hex::decode(&str[2..]).map_err(|e| RuntimeError(format!("hex: {e}").into()))?;
-		Ok(Self(data))
-	}
 }
 
 #[derive(Trace)]
