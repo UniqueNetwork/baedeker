@@ -1,0 +1,86 @@
+= Baedeker
+
+The substrate chain deployment and testing framework.
+
+== What is baedeker?
+
+Baedeker provides chain-spec modification, key generation, and chain deployment configurator based on UniqueNetwork's
+chainql substrate query language.
+
+== Mixing
+
+Baedeker provides one useful primitive for applying complex object transformations in imperative fashion: mixers.
+
+There is two mixers in baedeker:
+
+`bdk.mixer(mixin)(value)`
+
+`mixin` may have the following forms:
+
+- `null`: no transformation required, continue as is
+- `object`: continue with the provided object, extended from the base object
+- `array`: process every array element as separate mixin
+- `function`: this is where the fun begins. This mixer will be called with the two arguments: `prev` and `final`,
+where `prev` is the base object, and `final` is a final value with all the mixins applied.
+
+In a nutshell, function mixin will work as a y-combinator, which in the basic form looks like
+
+[source,jsonnet]
+----
+local ycombinator(f) =
+	local v = f(v);
+	v;
+
+ycombinator(function(final) {
+	a: 1,
+	// Works like `self.a`
+	b: final.a,
+})
+----
+
+=== Example
+
+[source,jsonnet]
+----
+
+local renameData(prev) =
+	prev {
+		_data::: prev.unconfortableDataFieldName,
+		unconfortableDataFieldName:: error 'was renamed to _data',
+	};
+local renameDataBack(prev) =
+	prev {
+		unconfortableDataFieldName::: prev._data,
+		_data:: error 'was renamed back',
+	};
+
+local addField(key, value) =
+	prev {_data+: {
+		[key]: value,
+	}};
+
+local mixin = bdk.mixer([
+	renameData,
+	addField('b', 20),
+	addField('c', 30),
+	renameDataBack,
+]);
+
+std.assertEquals(mixin({
+	unconfortableDataFieldName: {
+		a: 10,
+	},
+}), {
+	unconfortableDataFieldName: {
+		a: 10,
+		b: 20,
+		c: 30,
+	},
+})
+----
+
+=== Alternatives
+
+Chopsticks: Simulates network, instead of really launching it.
+
+Zombienet: Only intended for launching ephemeral substrate networks.
