@@ -1,0 +1,320 @@
+use std::any::Any;
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+use bip39::{Language, Mnemonic};
+use chainql_core::address::{SignatureSchema, Ss58Format};
+use jrsonnet_evaluator::manifest::JsonFormat;
+use jrsonnet_evaluator::typed::{CheckType, ComplexValType, Either2, Either3, Typed, ValType};
+use jrsonnet_evaluator::{bail, runtime_error, Either, ObjValue};
+use jrsonnet_evaluator::{
+	error::{ErrorKind::RuntimeError, Result},
+	function::{builtin, FuncVal, TlaArg},
+	gc::GcHashMap,
+	parser::Source,
+	Context, ContextBuilder, ContextInitializer, IStr, ObjValueBuilder, Pending, ResultExt, State,
+	Thunk, Val,
+};
+use jrsonnet_gcmodule::Trace;
+use libp2p::identity::ed25519;
+use tracing::{debug, warn};
+
+use crate::keystore::SecretStorage;
+use crate::spec_builder::{docker_mounts, FileLocation, SpecBuilder, SpecSource};
+use crate::{apply_tla_opt, spec_builder};
+
+fn mix_inner(
+	state: &State,
+	mut val: Val,
+	mixin: Val,
+	glob_args: &GcHashMap<IStr, TlaArg>,
+	final_val: Pending<Val>,
+) -> Result<Val> {
+	match &val {
+		Val::Obj(_) => {}
+		_ => bail!("mixin target should be object"),
+	};
+	match mixin {
+		Val::Null => Ok(val),
+		Val::Obj(obj) => {
+			let val = val
+				.as_obj()
+				.ok_or_else(|| runtime_error!("previous value was not an object!"))?;
+			Ok(Val::Obj(obj.extend_from(val)))
+		}
+		Val::Func(_) => {
+			let mut args = GcHashMap::new();
+			for (k, v) in glob_args.iter() {
+				args.insert(k.clone(), v.clone());
+			}
+			args.insert("prev".into(), TlaArg::Val(val.clone()));
+			args.insert("final".into(), TlaArg::Lazy(final_val.clone().into()));
+			let value = apply_tla_opt(state.clone(), &args, mixin)?;
+			match value {
+				obj @ Val::Obj(_) => Ok(obj),
+				mixin @ Val::Arr(_) => mix_inner(state, val, mixin, glob_args, final_val),
+				_ => bail!("mixin function should either return object, or "),
+			}
+		}
+		Val::Arr(arr) => {
+			for (i, mixin) in arr.iter().enumerate() {
+				let mixin = mixin.with_description(|| format!("<mixin arr {i}>"))?;
+				val = mix_inner(state, val, mixin, glob_args, final_val.clone())?;
+			}
+			Ok(val)
+		}
+		_ => bail!("mixin should be null/object/function!"),
+	}
+}
+
+#[builtin]
+pub fn builtin_mixer(ctx: Context, mixin: Val) -> Result<FuncVal> {
+	#[builtin(fields(
+		mixin: Val,
+		state: State,
+	))]
+	pub fn builtin_mix(this: &builtin_mix, prev: Val) -> Result<Val> {
+		let final_val = Pending::new();
+		let result = mix_inner(
+			&this.state,
+			prev,
+			this.mixin.clone(),
+			&GcHashMap::new(),
+			final_val.clone(),
+		)?;
+		final_val.fill(result.clone());
+		Ok(result)
+	}
+	Ok(FuncVal::builtin(builtin_mix {
+		mixin,
+		// FIXME: Propagate in evaluate_simple
+		state: ctx.state().clone(),
+	}))
+}
+
+#[builtin]
+pub fn builtin_to_relative(from: String, to: String) -> Result<String> {
+	let diff = pathdiff::diff_paths(to, from)
+		.ok_or_else(|| runtime_error!("incorrect paths, both should be absolute"))?;
+	let diff = diff.to_str().expect("inputs are utf-8");
+	Ok(diff.to_string())
+}
+
+#[builtin]
+pub fn builtin_docker_mounts() -> Result<Vec<String>> {
+	warn!(
+		"resulting spec will not work on the remote machine, impure bdk.dockerMounts() was used!"
+	);
+	Ok(docker_mounts()?)
+}
+
+#[builtin(fields(
+	#[trace(skip)]
+	builder: Rc<dyn SpecBuilder>,
+))]
+pub fn builtin_process_spec(
+	this: &builtin_process_spec,
+	bin: FileLocation,
+	spec: SpecSource,
+) -> Result<Val> {
+	let builder = &*this.builder;
+	Ok(match spec {
+		SpecSource::Genesis(g) => {
+			debug!("building genesis");
+			let v = builder.build_genesis(&bin, g.chain.clone())?;
+			let mut v: Val = serde_json::from_slice(&v).map_err(spec_builder::Error::from)?;
+			if let Some(modify) = &g.modify {
+				v = modify
+					.evaluate_simple(&(v,), true)
+					.description("modify callback")?;
+			}
+			let spec = v.manifest(JsonFormat::cli(4, true))?;
+			debug!("building raw");
+			let v = builder.build_raw(&bin, g.spec_file_prefix, spec)?;
+			let mut v: Val = serde_json::from_slice(&v).map_err(spec_builder::Error::from)?;
+			if let Some(modify) = &g.modify_raw {
+				v = modify
+					.evaluate_simple(&(v,), true)
+					.description("modify_raw callback")?;
+			}
+			v
+		}
+		SpecSource::Raw(raw) => raw.raw_spec.clone(),
+		SpecSource::FromScratchGenesis(f) => {
+			let spec = f.spec.manifest(JsonFormat::cli(4, true))?;
+			debug!("building raw");
+			let v = builder.build_raw(&bin, f.spec_file_prefix, spec)?;
+			let mut v: Val = serde_json::from_slice(&v).map_err(spec_builder::Error::from)?;
+			if let Some(modify) = &f.modify_raw {
+				v = modify
+					.evaluate_simple(&(v,), true)
+					.description("modify_raw callback")?;
+			}
+			v
+		}
+	})
+}
+
+pub struct AliasName(String);
+impl Typed for AliasName {
+	const TYPE: &'static ComplexValType = &ComplexValType::Simple(ValType::Str);
+
+	fn into_untyped(typed: Self) -> Result<Val> {
+		Ok(Val::string(format!("alias!{}", typed.0)))
+	}
+
+	fn from_untyped(untyped: Val) -> Result<Self> {
+		let Val::Str(s) = untyped else {
+			bail!("alias should be string")
+		};
+		let s = s.into_flat();
+		let Some(name) = s.strip_prefix("alias!") else {
+			bail!("alias string should start with alias!");
+		};
+		Ok(Self(name.to_owned()))
+	}
+}
+
+#[builtin(fields(
+	#[trace(skip)]
+	secrets: Rc<dyn SecretStorage>,
+))]
+pub fn builtin_ensure_keys(
+	this: &builtin_ensure_keys,
+	path: String,
+	wanted_keys: BTreeMap<String, Either![SignatureSchema, ObjValue]>,
+	format: Option<Ss58Format>,
+) -> Result<Val> {
+	#[derive(Default, Typed)]
+	struct Keys {
+		#[typed(rename = "nodeIdentity")]
+		node_identity: String,
+		#[typed(add)]
+		keys: BTreeMap<String, String>,
+		#[typed(add)]
+		wallets: BTreeMap<String, String>,
+		#[typed(rename = "localKeystoreDir")]
+		local_keystore_dir: String,
+		#[typed(rename = "localNodeFile")]
+		local_node_file: String,
+	}
+
+	let format = format.unwrap_or_default().0;
+	let secrets = &this.secrets;
+
+	let mut out = Keys::default();
+
+	if secrets.get_node_id(&path)?.is_none() {
+		let pair = ed25519::Keypair::generate();
+		secrets.store_node_key(&path, pair)?;
+	}
+	out.node_identity = secrets.get_node_id(&path)?.expect("just inserted");
+
+	for (name, scheme) in &wanted_keys {
+		if let Some(ty) = name.strip_prefix('_') {
+			let Either2::A(scheme) = scheme else {
+				bail!("scheme should be string-based");
+			};
+			if secrets.get_wallet(&path, ty, *scheme, format)?.is_none() {
+				let suri = Mnemonic::generate_in(Language::English, 24)
+					.unwrap()
+					.to_string();
+				secrets.store_wallet(&path, ty, *scheme, &suri, format)?;
+			}
+			out.wallets.insert(
+				name[1..].to_string(),
+				secrets
+					.get_wallet(&path, ty, *scheme, format)?
+					.expect("just inserted"),
+			);
+		} else if name.ends_with("Keys") && name.len() > 4
+			|| name.ends_with("Key") && name.len() > 3
+		{
+			// Key set, i.e `sessionKeys`, pass.
+		} else {
+			let Either2::A(scheme) = scheme else {
+				bail!("scheme should be string-based");
+			};
+			if secrets.get_typed(&path, name, *scheme, format)?.is_none() {
+				let suri = Mnemonic::generate_in(Language::English, 12)
+					.unwrap()
+					.to_string();
+				secrets.store_typed_key(&path, name, *scheme, &suri, format)?;
+			}
+			out.keys.insert(
+				name.clone(),
+				secrets
+					.get_typed(&path, name, *scheme, format)?
+					.expect("just inserted"),
+			);
+		}
+	}
+	// TODO: Remove the requirement
+	out.local_keystore_dir = secrets
+		.local_keystore_dir(&path)?
+		.ok_or_else(|| runtime_error!("local keystore dir required"))?;
+	out.local_node_file = secrets
+		.local_node_file(&path)?
+		.ok_or_else(|| runtime_error!("local node file required"))?;
+	Keys::into_untyped(out)
+}
+
+// TODO: Move to cql
+
+#[derive(PartialOrd, Ord, PartialEq, Eq)]
+struct Hex(Vec<u8>);
+impl Typed for Hex {
+	const TYPE: &'static ComplexValType = &ComplexValType::Simple(ValType::Str);
+
+	fn into_untyped(typed: Self) -> Result<Val> {
+		let mut out = vec![0; typed.0.len() * 2 + 2];
+		out[1] = b'x';
+		hex::encode_to_slice(&typed.0, &mut out[2..]).expect("valid buffer");
+		Ok(Val::Str(String::from_utf8(out).expect("valid hex").into()))
+	}
+
+	fn from_untyped(untyped: Val) -> Result<Self> {
+		Self::TYPE.check(&untyped)?;
+		let str = untyped.as_str().expect("is string");
+		if str.starts_with("0x") {
+			bail!("hex string should start with 0x");
+		}
+		let data = hex::decode(&str[2..]).map_err(|e| RuntimeError(format!("hex: {e}").into()))?;
+		Ok(Self(data))
+	}
+}
+
+#[derive(Trace)]
+pub struct BdkContextInitializer {
+	#[trace(skip)]
+	pub spec_builder: Rc<dyn SpecBuilder>,
+	#[trace(skip)]
+	pub secrets: Rc<dyn SecretStorage>,
+}
+
+impl ContextInitializer for BdkContextInitializer {
+	fn populate(&self, _for_file: Source, builder: &mut ContextBuilder) {
+		let mut bdk = ObjValueBuilder::new();
+		bdk.method("mixer", builtin_mixer::INST);
+		bdk.method("toRelative", builtin_to_relative::INST);
+		bdk.method("dockerMounts", builtin_docker_mounts::INST);
+		bdk.method(
+			"processSpec",
+			builtin_process_spec {
+				builder: self.spec_builder.clone(),
+			},
+		);
+		bdk.method(
+			"ensureKeys",
+			builtin_ensure_keys {
+				secrets: self.secrets.clone(),
+			},
+		);
+
+		builder.bind("bdk", Thunk::evaluated(Val::Obj(bdk.build())));
+	}
+
+	fn as_any(&self) -> &dyn Any {
+		self
+	}
+}

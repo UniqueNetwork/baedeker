@@ -1,0 +1,38 @@
+[package]
+name = "baedeker"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bip39 = { version = "2.0.0", features = ["rand"] }
+chainql-core = "0.4.3"
+clap = { version = "4.3.19", features = ["derive"] }
+hex = "0.4.3"
+jrsonnet-cli = { version = "0.5.0-pre91", features = ["exp-preserve-order", "exp-bigint", "exp-null-coaelse"] }
+jrsonnet-evaluator = { version = "0.5.0-pre91", features = ["exp-preserve-order", "exp-object-iteration", "exp-destruct", "exp-bigint", "exp-null-coaelse"] }
+jrsonnet-gcmodule = "0.3.5"
+jrsonnet-stdlib = { version = "0.5.0-pre91", features = ["exp-preserve-order", "exp-bigint", "exp-null-coaelse"] }
+libp2p = { version = "0.52.1", features = ["ed25519", "identify"] }
+parity-scale-codec = "3.6.4"
+pathdiff = "0.2.1"
+rand = "0.8.5"
+sc-executor = "0.26.0"
+serde_json = "1.0.103"
+sp-core = { version = "22.0.0", features = ["std"] }
+sp-io = "24.0.0"
+sp-maybe-compressed-blob = "6.0.0"
+sp-state-machine = "0.29.0"
+tempfile = "3.7.0"
+thiserror = "1.0.44"
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+
+[patch.crates-io]
+jrsonnet-cli = { path = "/home/lach/build/jrsonnet/crates/jrsonnet-cli" }
+jrsonnet-evaluator = { path = "/home/lach/build/jrsonnet/crates/jrsonnet-evaluator" }
+jrsonnet-stdlib = { path = "/home/lach/build/jrsonnet/crates/jrsonnet-stdlib" }
+jrsonnet-gcmodule = { path = "/home/lach/build/gcmodule" }
+
+chainql-core = { path = "/home/lach/unqdev/chainql/crates/chainql-core" }
