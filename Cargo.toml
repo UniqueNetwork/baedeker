@@ -8,7 +8,7 @@ license = "MIT"
 
 [dependencies]
 bip39 = { version = "2.0.0", features = ["rand"] }
-chainql-core = "0.4.5"
+chainql-core = "0.4.6"
 clap = { version = "4.3.19", features = ["derive"] }
 hex = "0.4.3"
 jrsonnet-cli = { version = "0.5.0-pre95", features = ["exp-preserve-order", "exp-bigint", "exp-null-coaelse"] }
@@ -21,7 +21,7 @@ pathdiff = "0.2.1"
 rand = "0.8.5"
 sc-executor = "0.26.0"
 serde_json = "1.0.103"
-sp-core = { version = "22.0.0", features = ["std"] }
+sp-core = { version = "32.0.0", features = ["std"] }
 sp-io = "24.0.0"
 sp-maybe-compressed-blob = "6.0.0"
 sp-state-machine = "0.29.0"
