@@ -103,7 +103,7 @@ impl DockerSpecBuilder {
 			.args([
 				"-e",
 				// Wasm compilation logs are too noisy, github actions can't even handle them
-				"RUST_LOG=debug",
+				"RUST_LOG=debug,wasmtime_cranelift=info",
 				"-e",
 				"RUST_BACKTRACE=full",
 				"-e",
