@@ -196,7 +196,7 @@ impl GeneratorT for DebugGen {
 	}
 
 	fn process(&self, data: Val) -> Result<()> {
-		let debug = data.manifest(JsonFormat::debug())?;
+		let debug = data.manifest(JsonFormat::cli(2, true))?;
 		eprintln!("{debug}");
 		Ok(())
 	}
