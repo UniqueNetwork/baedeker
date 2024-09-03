@@ -230,6 +230,7 @@ impl FromStr for Generator {
 }
 
 #[derive(Parser)]
+#[command(version, about)]
 struct Opts {
 	/// Where and how to store secrets.
 	///
