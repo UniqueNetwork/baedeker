@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::rc::Rc;
 
 use bip39::{Language, Mnemonic};
@@ -129,6 +130,14 @@ pub fn builtin_process_spec(
 					.description("modify callback")?;
 			}
 			let spec = v.manifest(JsonFormat::cli(4, true))?;
+
+			_ = std::fs::create_dir_all("genesises");
+			_ = std::fs::File::create(format!(
+				"genesises/genesis-{}.json",
+				g.chain.clone().unwrap_or("unknown".to_owned())
+			))
+			.and_then(|mut f| f.write_all(spec.as_bytes()));
+
 			debug!("building raw");
 			let v = builder.build_raw(&bin, g.spec_file_prefix, spec)?;
 			let mut v: Val = serde_json::from_slice(&v).map_err(spec_builder::Error::from)?;

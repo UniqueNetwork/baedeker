@@ -344,9 +344,12 @@ impl FromStr for SpecBackend {
 impl SpecBuilder for SpecBackend {
 	fn build_genesis(&self, bin: &FileLocation, chain: Option<String>) -> Result<Vec<u8>> {
 		info!("building genesis, chain={chain:?}");
-		match self {
-			SpecBackend::Docker(d) => d.build_genesis(bin, chain),
-		}
+
+		let genesis = match self {
+			SpecBackend::Docker(d) => d.build_genesis(bin, chain.clone()),
+		}?;
+
+		Ok(genesis)
 	}
 
 	fn build_raw(

@@ -233,7 +233,7 @@ impl FromStr for Generator {
 struct Opts {
 	/// Where and how to store secrets.
 	///
-	/// Available values: kubernetes, file.
+	/// Available values: kubernetes.
 	#[arg(long)]
 	secret: SecretBackend,
 	/// How to build specs.
