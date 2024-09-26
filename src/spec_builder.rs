@@ -29,6 +29,8 @@ pub enum Error {
 	Json(#[from] serde_json::Error),
 	#[error("binary is not set")]
 	BinaryNotSet,
+	#[error("invalid parameter: {0}")]
+	InvalidParameter(&'static str),
 }
 type Result<T, E = Error> = result::Result<T, E>;
 
@@ -327,9 +329,11 @@ const _: () = {
 	}
 };
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub enum SpecBackend {
 	Docker(DockerSpecBuilder),
+	#[default]
+	Unset,
 }
 impl FromStr for SpecBackend {
 	type Err = &'static str;
@@ -337,7 +341,7 @@ impl FromStr for SpecBackend {
 	fn from_str(s: &str) -> result::Result<Self, Self::Err> {
 		Ok(match s {
 			"docker" => Self::Docker(DockerSpecBuilder),
-			_ => return Err("unknown spec backend"),
+			_ => Self::Unset,
 		})
 	}
 }
@@ -346,6 +350,7 @@ impl SpecBuilder for SpecBackend {
 		info!("building genesis, chain={chain:?}");
 		match self {
 			SpecBackend::Docker(d) => d.build_genesis(bin, chain),
+			SpecBackend::Unset => Err(Error::InvalidParameter("spec backend is not set")),
 		}
 	}
 
@@ -358,6 +363,7 @@ impl SpecBuilder for SpecBackend {
 		info!("building raw");
 		match self {
 			SpecBackend::Docker(d) => d.build_raw(bin, spec_file_prefix, spec),
+			SpecBackend::Unset => Err(Error::InvalidParameter("spec backend is not set")),
 		}
 	}
 }

@@ -51,6 +51,7 @@ impl AssetStore for FileAssetStore {
 pub enum AssetBackend {
 	File(FileAssetStore),
 }
+
 impl FromStr for AssetBackend {
 	type Err = &'static str;
 
@@ -60,7 +61,6 @@ impl FromStr for AssetBackend {
 				root: PathBuf::from(file),
 			}));
 		}
-		Err("unknown secret backend")
 	}
 }
 impl AssetStore for AssetBackend {

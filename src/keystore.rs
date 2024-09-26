@@ -32,6 +32,8 @@ pub enum Error {
 	Json(#[from] serde_json::Error),
 	#[error("duplicate key by type: {0}")]
 	DuplicateKeyByType(String),
+	#[error("invalid parameter: {0}")]
+	InvalidParameter(&'static str),
 }
 type Result<T, E = Error> = result::Result<T, E>;
 
@@ -181,7 +183,7 @@ impl SecretStorage for FileNodeKeys {
 		let dir = self.keystore_dir_create(node)?;
 
 		let ty_hex = hex::encode(ty);
-		let public_hex = hex::encode(&public_bytes_seed(schema, suri)?);
+		let public_hex = hex::encode(public_bytes_seed(schema, suri)?);
 
 		let name = format!("{ty_hex}{public_hex}");
 
@@ -314,24 +316,27 @@ impl SecretStorage for FileNodeKeys {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub enum SecretBackend {
 	File(FileNodeKeys),
+	#[default]
+	Unset,
 }
 impl FromStr for SecretBackend {
 	type Err = &'static str;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		if let Some(file) = s.strip_prefix("file=") {
-			return Ok(Self::File(FileNodeKeys {
+			Ok(Self::File(FileNodeKeys {
 				root: {
 					let mut cwd = env::current_dir().map_err(|_| "failed to get CWD")?;
 					cwd.push(file);
 					cwd
 				},
-			}));
+			}))
+		} else {
+			Ok(SecretBackend::Unset)
 		}
-		Err("unknown secret backend")
 	}
 }
 
@@ -341,12 +346,14 @@ impl SecretStorage for SecretBackend {
 		info!("🛂 new node identity {name} => {base58}");
 		match self {
 			SecretBackend::File(f) => f.store_node_key(name, keypair),
+			SecretBackend::Unset => Err(Error::InvalidParameter("secret backend is not set")),
 		}
 	}
 
 	fn get_node_id(&self, name: &str) -> Result<Option<String>> {
 		match self {
 			SecretBackend::File(f) => f.get_node_id(name),
+			SecretBackend::Unset => Err(Error::InvalidParameter("secret backend is not set")),
 		}
 	}
 
@@ -363,6 +370,7 @@ impl SecretStorage for SecretBackend {
 		});
 		match self {
 			SecretBackend::File(f) => f.store_typed_key(node, ty, schema, suri, format),
+			SecretBackend::Unset => Err(Error::InvalidParameter("secret backend is not set")),
 		}
 	}
 
@@ -375,6 +383,7 @@ impl SecretStorage for SecretBackend {
 	) -> Result<Option<String>> {
 		match self {
 			SecretBackend::File(f) => f.get_typed(node, ty, schema, format),
+			SecretBackend::Unset => Err(Error::InvalidParameter("secret backend is not set")),
 		}
 	}
 
@@ -392,6 +401,7 @@ impl SecretStorage for SecretBackend {
 		});
 		match self {
 			SecretBackend::File(f) => f.store_wallet(name, ty, schema, suri, format),
+			SecretBackend::Unset => Err(Error::InvalidParameter("secret backend is not set")),
 		}
 	}
 
@@ -404,18 +414,21 @@ impl SecretStorage for SecretBackend {
 	) -> Result<Option<String>> {
 		match self {
 			SecretBackend::File(f) => f.get_wallet(node, ty, schema, format),
+			SecretBackend::Unset => Err(Error::InvalidParameter("secret backend is not set")),
 		}
 	}
 
 	fn local_keystore_dir(&self, node: &str) -> Result<Option<String>> {
 		match self {
 			SecretBackend::File(f) => f.local_keystore_dir(node),
+			SecretBackend::Unset => Err(Error::InvalidParameter("secret backend is not set")),
 		}
 	}
 
 	fn local_node_file(&self, node: &str) -> Result<Option<String>> {
 		match self {
 			SecretBackend::File(f) => f.local_node_file(node),
+			SecretBackend::Unset => Err(Error::InvalidParameter("secret backend is not set")),
 		}
 	}
 }

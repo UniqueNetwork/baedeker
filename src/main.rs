@@ -5,7 +5,7 @@ use std::{
 	str::FromStr,
 };
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use jrsonnet_cli::{MiscOpts, TlaOpts, TraceOpts};
 use jrsonnet_evaluator::{
 	bail,
@@ -212,8 +212,6 @@ impl FromStr for Generator {
 				root.push(file);
 				root
 			}));
-		// } else if let Some(manifester) = s.strip_prefix("haya=") {
-		// 	return Ok(Self::Kubernetes());
 		} else if let Some(file) = s.strip_prefix("docker_compose_discover=") {
 			return Ok(Self::DockerComposeDiscover({
 				let mut root = env::current_dir().map_err(|_| "bad cwd")?;
@@ -230,16 +228,19 @@ impl FromStr for Generator {
 }
 
 #[derive(Parser)]
+#[command(about)]
 struct Opts {
+	#[command(subcommand)]
+	command: Option<Commands>,
 	/// Where and how to store secrets.
 	///
-	/// Available values: kubernetes, file.
-	#[arg(long)]
+	/// Available values: file.
+	#[arg(long, default_value = "SecretBackend::Unset")]
 	secret: SecretBackend,
 	/// How to build specs.
 	///
 	/// Available values: docker.
-	#[arg(long)]
+	#[arg(long, default_value = "SpecBackend::Unset")]
 	spec: SpecBackend,
 	/// Which type of output this generator should produce.
 	///
@@ -255,6 +256,12 @@ struct Opts {
 	modules: Vec<String>,
 	#[arg(long)]
 	input_modules: Vec<String>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+	/// Print version
+	Version,
 }
 
 pub fn apply_tla_opt(s: State, args: &GcHashMap<IStr, TlaArg>, val: Val) -> Result<Val> {
@@ -463,6 +470,11 @@ fn main_sync() {
 
 	let opts = Opts::parse();
 	let trace_format = opts.trace.trace_format();
+
+	if let Some(Commands::Version) = opts.command {
+		println!("{} {}", env!("CARGO_BIN_NAME"), env!("CARGO_PKG_VERSION"));
+		return;
+	}
 
 	match main_jrsonnet(opts) {
 		Ok(_) => {}
