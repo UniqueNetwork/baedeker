@@ -167,7 +167,7 @@ impl SpecBuilder for DockerSpecBuilder {
 		spec: String,
 	) -> Result<Vec<u8>> {
 		let mut tempfile = Builder::new();
-		tempfile.permissions(fs::Permissions::from_mode(0o444));
+		tempfile.permissions(fs::Permissions::from_mode(0o644));
 		if let Some(prefix) = &spec_file_prefix {
 			tempfile.prefix(prefix);
 		}
