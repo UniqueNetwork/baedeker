@@ -1,6 +1,7 @@
 use std::{
-	fs::{metadata, read_dir},
+	fs::{self, metadata, read_dir},
 	io::Write,
+	os::unix::fs::PermissionsExt,
 	path::PathBuf,
 	process::{Command, Stdio},
 	result,
@@ -166,6 +167,7 @@ impl SpecBuilder for DockerSpecBuilder {
 		spec: String,
 	) -> Result<Vec<u8>> {
 		let mut tempfile = Builder::new();
+		tempfile.permissions(fs::Permissions::from_mode(0o444));
 		if let Some(prefix) = &spec_file_prefix {
 			tempfile.prefix(prefix);
 		}
