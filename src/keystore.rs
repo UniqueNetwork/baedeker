@@ -1,6 +1,8 @@
 use std::{
-	env, fs,
+	env,
+	fs::{self, Permissions},
 	io::{self, ErrorKind, Write},
+	os::unix::fs::PermissionsExt,
 	path::PathBuf,
 	result,
 	str::FromStr,
@@ -11,6 +13,8 @@ use libp2p::identity::{ed25519, PeerId};
 use sp_core::crypto::{SecretStringError, Ss58AddressFormat};
 use tempfile::{NamedTempFile, PersistError};
 use tracing::info;
+
+use crate::fs_utils;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -109,17 +113,21 @@ impl FileNodeKeys {
 	}
 	fn keystore_dir(&self, node: &str) -> Result<Option<PathBuf>> {
 		let mut path = self.root.to_path_buf();
-		path.push(format!("keystore-{node}"));
+		path.push(format!("keystore/{node}"));
 		if !path.is_dir() {
 			return Ok(None);
 		}
 		Ok(Some(path))
 	}
+
 	fn keystore_dir_create(&self, node: &str) -> Result<PathBuf> {
-		let mut path = self.root.to_path_buf();
-		path.push(format!("keystore-{node}"));
-		fs::create_dir_all(&path)?;
-		Ok(path)
+		let keystore_path = self.root.join("keystore");
+		fs::create_dir_all(&keystore_path)?;
+
+		let keystore_node_path = keystore_path.join(node);
+		fs_utils::create_dir_all(&keystore_node_path, 0o744)?;
+
+		Ok(keystore_node_path)
 	}
 	fn wallet_dir(&self) -> Result<Option<PathBuf>> {
 		let mut path = self.root.to_path_buf();
@@ -144,6 +152,8 @@ impl SecretStorage for FileNodeKeys {
 
 		let mut temp = NamedTempFile::new_in(&self.root)?;
 		temp.write_all(keypair.secret().as_ref())?;
+		temp.as_file_mut()
+			.set_permissions(Permissions::from_mode(0o600))?;
 		temp.persist(path)?;
 
 		Ok(())
@@ -193,6 +203,8 @@ impl SecretStorage for FileNodeKeys {
 		{
 			let mut file = NamedTempFile::new_in(&dir)?;
 			file.write_all(serde_json::to_string(&suri).unwrap().as_bytes())?;
+			file.as_file_mut()
+				.set_permissions(Permissions::from_mode(0o600))?;
 			file.persist(&secret)?;
 		}
 
