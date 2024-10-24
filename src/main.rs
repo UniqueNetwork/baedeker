@@ -1,6 +1,6 @@
 use std::{
 	env,
-	fs::{self, read_to_string},
+	fs::{create_dir_all, read_to_string, write},
 	path::{Component, PathBuf},
 	str::FromStr,
 };
@@ -114,7 +114,7 @@ impl GeneratorT for DockerCompose {
 				bail!("generator output should not escape the output directory: tried to write to {path:?}, which is outside of {dir:?}");
 			}
 			let value = IStr::from_untyped(value?)?;
-			fs::create_dir_all(path.parent().expect("not root")).expect("mkdirp");
+			create_dir_all(path.parent().expect("not root")).expect("mkdirp");
 			if path.exists() && output.has_field_ex(format!("reconcile_{name}").into(), true) {
 				let data = read_to_string(&path).expect("read");
 				let reconciler = output
@@ -123,9 +123,9 @@ impl GeneratorT for DockerCompose {
 				let reconciler = <NativeFn<((String, IStr), IStr)>>::from_untyped(reconciler)
 					.description("reconciler type")?;
 				let reconciled = reconciler(data, value).description("reconciler call")?;
-				fs::write(&path, reconciled.as_bytes()).expect("write");
+				write(&path, reconciled.as_bytes()).expect("write");
 			} else {
-				fs::write(&path, value.as_bytes()).expect("write");
+				write(&path, value.as_bytes()).expect("write");
 			}
 		}
 		Ok(())
@@ -154,8 +154,8 @@ impl GeneratorT for DockerComposeDiscover {
 			.output_file
 			.parent()
 			.ok_or_else(|| runtime_error!("no parent"))?;
-		fs::create_dir_all(parent).map_err(|e| runtime_error!("mkdir failed: {e}"))?;
-		fs::write(&self.output_file, output.as_bytes())
+		create_dir_all(parent).map_err(|e| runtime_error!("mkdir failed: {e}"))?;
+		write(&self.output_file, output.as_bytes())
 			.map_err(|e| runtime_error!("write failed: {e}"))?;
 		Ok(())
 	}

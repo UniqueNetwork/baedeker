@@ -1,6 +1,6 @@
 use std::{
 	env,
-	fs::{self, Permissions},
+	fs::{self, Permissions, create_dir_all},
 	io::{self, ErrorKind, Write},
 	os::unix::fs::PermissionsExt,
 	path::PathBuf,
@@ -14,7 +14,7 @@ use sp_core::crypto::{SecretStringError, Ss58AddressFormat};
 use tempfile::{NamedTempFile, PersistError};
 use tracing::info;
 
-use crate::fs_utils;
+use crate::fs_utils::create_dir_mode;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -122,10 +122,10 @@ impl FileNodeKeys {
 
 	fn keystore_dir_create(&self, node: &str) -> Result<PathBuf> {
 		let keystore_path = self.root.join("keystore");
-		fs::create_dir_all(&keystore_path)?;
+		create_dir_all(&keystore_path)?;
 
 		let keystore_node_path = keystore_path.join(node);
-		fs_utils::create_dir_all(&keystore_node_path, 0o744)?;
+		create_dir_mode(&keystore_node_path, 0o744)?;
 
 		Ok(keystore_node_path)
 	}
