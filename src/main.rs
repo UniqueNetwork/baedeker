@@ -29,6 +29,7 @@ use crate::docker::EMPTY_IMAGE;
 
 // mod asset;
 mod docker;
+mod fs_utils;
 mod keystore;
 mod library;
 mod spec_builder;
