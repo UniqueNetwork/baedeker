@@ -214,13 +214,20 @@ pub struct GenesisSpecSource {
 	#[typed(rename = "modifyRaw")]
 	pub modify_raw: Option<FuncVal>,
 }
+
 #[derive(Typed, Trace, Clone)]
 pub struct RawSpecSource {
+	#[typed(rename = "rawSpec")]
 	pub raw_spec: Val,
+	#[typed(rename = "modifyRaw")]
+	pub modify_raw: Option<FuncVal>,
 }
+
 #[derive(Typed, Trace, Clone)]
 pub struct FromScratchGenesisSpecSource {
 	pub spec: Val,
+	pub modify: Option<FuncVal>,
+	#[typed(rename = "specFilePrefix")]
 	pub spec_file_prefix: Option<String>,
 	#[typed(rename = "modifyRaw")]
 	pub modify_raw: Option<FuncVal>,
