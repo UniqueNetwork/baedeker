@@ -118,41 +118,75 @@ pub fn builtin_process_spec(
 	spec: SpecSource,
 ) -> Result<Val> {
 	let builder = &*this.builder;
-	Ok(match spec {
+	match spec {
 		SpecSource::Genesis(g) => {
-			debug!("building genesis");
-			let v = builder.build_genesis(&bin, g.chain.clone())?;
-			let mut v: Val = serde_json::from_slice(&v).map_err(spec_builder::Error::from)?;
-			if let Some(modify) = &g.modify {
-				v = modify
-					.evaluate_simple(&(v,), true)
-					.description("modify callback")?;
-			}
-			let spec = v.manifest(JsonFormat::cli(4, true))?;
-			debug!("building raw");
-			let v = builder.build_raw(&bin, g.spec_file_prefix, spec)?;
-			let mut v: Val = serde_json::from_slice(&v).map_err(spec_builder::Error::from)?;
-			if let Some(modify) = &g.modify_raw {
-				v = modify
-					.evaluate_simple(&(v,), true)
-					.description("modify_raw callback")?;
-			}
-			v
+			let spec = build_genesis(&bin, builder, g.chain, g.modify)?;
+			build_raw(&bin, builder, g.spec_file_prefix, spec, g.modify_raw)
 		}
-		SpecSource::Raw(raw) => raw.raw_spec.clone(),
+		SpecSource::Raw(raw) => {
+			if let Some(modify_raw) = &raw.modify_raw {
+				modify_raw
+					.evaluate_simple(&(raw.raw_spec,), true)
+					.description("modify_raw callback")
+			} else {
+				Ok(raw.raw_spec)
+			}
+		}
 		SpecSource::FromScratchGenesis(f) => {
-			let spec = f.spec.manifest(JsonFormat::cli(4, true))?;
-			debug!("building raw");
-			let v = builder.build_raw(&bin, f.spec_file_prefix, spec)?;
-			let mut v: Val = serde_json::from_slice(&v).map_err(spec_builder::Error::from)?;
-			if let Some(modify) = &f.modify_raw {
-				v = modify
-					.evaluate_simple(&(v,), true)
-					.description("modify_raw callback")?;
-			}
-			v
+			let spec = if let Some(modify) = &f.modify {
+				modify
+					.evaluate_simple(&(f.spec,), true)
+					.description("modify callback")?
+			} else {
+				f.spec
+			};
+
+			build_raw(&bin, builder, f.spec_file_prefix, spec, f.modify_raw)
 		}
-	})
+	}
+}
+
+fn build_genesis(
+	bin: &FileLocation,
+	spec_builder: &dyn SpecBuilder,
+	chain: Option<String>,
+	modify: Option<FuncVal>,
+) -> Result<Val> {
+	debug!("building genesis");
+
+	let v = spec_builder.build_genesis(bin, chain)?;
+	let mut v: Val = serde_json::from_slice(&v).map_err(spec_builder::Error::from)?;
+
+	if let Some(modify) = &modify {
+		v = modify
+			.evaluate_simple(&(v,), true)
+			.description("modify callback")?;
+	}
+
+	Ok(v)
+}
+
+fn build_raw(
+	bin: &FileLocation,
+	spec_builder: &dyn SpecBuilder,
+	spec_file_prefix: Option<String>,
+	spec: Val,
+	modify_raw: Option<FuncVal>,
+) -> Result<Val> {
+	debug!("building raw");
+
+	let spec = spec.manifest(JsonFormat::cli(4, true))?;
+
+	let v = spec_builder.build_raw(bin, spec_file_prefix, spec)?;
+	let mut v: Val = serde_json::from_slice(&v).map_err(spec_builder::Error::from)?;
+
+	if let Some(modify) = &modify_raw {
+		v = modify
+			.evaluate_simple(&(v,), true)
+			.description("modify_raw callback")?;
+	}
+
+	Ok(v)
 }
 
 #[derive(Typed)]
