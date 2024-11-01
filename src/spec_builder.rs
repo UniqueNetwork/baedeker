@@ -217,7 +217,8 @@ pub struct GenesisSpecSource {
 
 #[derive(Typed, Trace, Clone)]
 pub struct RawSpecSource {
-	#[typed(rename = "rawSpec")]
+	// Alias is needed to save backward compatibility.
+	#[typed(rename = "rawSpec", alias = "raw_spec")]
 	pub raw_spec: Val,
 	#[typed(rename = "modifyRaw")]
 	pub modify_raw: Option<FuncVal>,
@@ -227,7 +228,8 @@ pub struct RawSpecSource {
 pub struct FromScratchGenesisSpecSource {
 	pub spec: Val,
 	pub modify: Option<FuncVal>,
-	#[typed(rename = "specFilePrefix")]
+	// Alias is needed to save backward compatibility.
+	#[typed(rename = "specFilePrefix", alias = "spec_file_prefix")]
 	pub spec_file_prefix: Option<String>,
 	#[typed(rename = "modifyRaw")]
 	pub modify_raw: Option<FuncVal>,
