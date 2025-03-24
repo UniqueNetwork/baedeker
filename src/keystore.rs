@@ -1,6 +1,6 @@
 use std::{
 	env,
-	fs::{self, Permissions, create_dir_all},
+	fs::{self, create_dir_all, Permissions},
 	io::{self, ErrorKind, Write},
 	os::unix::fs::PermissionsExt,
 	path::PathBuf,
@@ -125,7 +125,7 @@ impl FileNodeKeys {
 		create_dir_all(&keystore_path)?;
 
 		let keystore_node_path = keystore_path.join(node);
-		create_dir_mode(&keystore_node_path, 0o744)?;
+		create_dir_mode(&keystore_node_path, 0o755)?;
 
 		Ok(keystore_node_path)
 	}
@@ -153,7 +153,7 @@ impl SecretStorage for FileNodeKeys {
 		let mut temp = NamedTempFile::new_in(&self.root)?;
 		temp.write_all(keypair.secret().as_ref())?;
 		temp.as_file_mut()
-			.set_permissions(Permissions::from_mode(0o600))?;
+			.set_permissions(Permissions::from_mode(0o644))?;
 		temp.persist(path)?;
 
 		Ok(())
@@ -204,7 +204,7 @@ impl SecretStorage for FileNodeKeys {
 			let mut file = NamedTempFile::new_in(&dir)?;
 			file.write_all(serde_json::to_string(&suri).unwrap().as_bytes())?;
 			file.as_file_mut()
-				.set_permissions(Permissions::from_mode(0o600))?;
+				.set_permissions(Permissions::from_mode(0o644))?;
 			file.persist(&secret)?;
 		}
 
