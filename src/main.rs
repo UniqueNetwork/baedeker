@@ -8,15 +8,7 @@ use std::{
 use clap::{Parser, Subcommand};
 use jrsonnet_cli::{MiscOpts, TlaOpts, TraceOpts};
 use jrsonnet_evaluator::{
-	bail,
-	function::{CallLocation, TlaArg},
-	gc::GcHashMap,
-	manifest::JsonFormat,
-	parser::{Source, SourcePath, SourceVirtual},
-	runtime_error,
-	trace::PathResolver,
-	typed::{NativeFn, Typed},
-	IStr, ObjValue, ObjValueBuilder, Pending, Result, ResultExt, State, Val,
+	bail, function::{CallLocation, TlaArg}, gc::GcHashMap, in_description_frame, manifest::JsonFormat, parser::{Source, SourcePath, SourceVirtual}, runtime_error, trace::PathResolver, typed::{NativeFn, Typed}, IStr, ObjValue, ObjValueBuilder, Pending, Result, ResultExt, State, Val
 };
 use keystore::SecretBackend;
 use spec_builder::SpecBackend;
@@ -283,7 +275,7 @@ pub fn apply_tla_opt(s: State, args: &GcHashMap<IStr, TlaArg>, val: Val) -> Resu
 		}
 		new_args.insert(name.clone(), val.clone());
 	}
-	State::push_description(
+	in_description_frame(
 		|| "during TLA call".to_owned(),
 		|| {
 			func.evaluate(
@@ -300,16 +292,18 @@ pub fn apply_tla_opt(s: State, args: &GcHashMap<IStr, TlaArg>, val: Val) -> Resu
 }
 
 fn main_jrsonnet(opts: Opts) -> Result<()> {
-	let state = State::default();
-	state.set_import_resolver(opts.import.import_resolver());
-	state.set_context_initializer((
-		jrsonnet_stdlib::ContextInitializer::new(state.clone(), PathResolver::new_cwd_fallback()),
+	let mut sb = State::builder();
+	sb.import_resolver(opts.import.import_resolver());
+	sb.context_initializer((
+		jrsonnet_stdlib::ContextInitializer::new(PathResolver::new_cwd_fallback()),
 		chainql_core::CqlContextInitializer::default(),
 		library::BdkContextInitializer {
 			spec_builder: Rc::new(opts.spec),
 			secrets: Rc::new(opts.secret),
 		},
 	));
+
+	let state = sb.build();
 
 	let generators = opts
 		.generator
@@ -318,7 +312,7 @@ fn main_jrsonnet(opts: Opts) -> Result<()> {
 		.collect::<Vec<_>>();
 
 	let mut tla = opts.tla.tla_opts()?;
-	if tla.contains_key("prev") || tla.contains_key("final") {
+	if tla.contains_key(&IStr::from("prev")) || tla.contains_key(&IStr::from("final")) {
 		bail!("TLA should not contain prev/final")
 	}
 
