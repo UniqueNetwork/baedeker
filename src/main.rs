@@ -1,4 +1,5 @@
 use std::{
+	collections::HashMap,
 	env,
 	fs::{create_dir_all, read_to_string, write},
 	path::{Component, PathBuf},
@@ -8,7 +9,16 @@ use std::{
 use clap::{Parser, Subcommand};
 use jrsonnet_cli::{MiscOpts, TlaOpts, TraceOpts};
 use jrsonnet_evaluator::{
-	bail, function::{CallLocation, TlaArg}, gc::GcHashMap, in_description_frame, manifest::JsonFormat, parser::{Source, SourcePath, SourceVirtual}, runtime_error, trace::PathResolver, typed::{NativeFn, Typed}, IStr, ObjValue, ObjValueBuilder, Pending, Result, ResultExt, State, Val
+	bail,
+	function::{CallLocation, TlaArg},
+	gc::GcHashMap,
+	in_description_frame,
+	manifest::JsonFormat,
+	parser::{Source, SourcePath, SourceVirtual},
+	runtime_error,
+	trace::PathResolver,
+	typed::{NativeFn, Typed},
+	IStr, ObjValue, ObjValueBuilder, Pending, Result, ResultExt, State, Val,
 };
 use keystore::SecretBackend;
 use spec_builder::SpecBackend;
@@ -28,16 +38,27 @@ mod spec_builder;
 
 #[derive(Clone)]
 enum Generator {
-	DockerCompose(PathBuf),
-	DockerComposeDiscover(PathBuf),
+	DockerCompose {
+		output_dir: PathBuf,
+		keystore_read_only: bool,
+	},
+	DockerComposeDiscover {
+		output_file: PathBuf,
+	},
 	Debug,
 	AddressBook,
 }
 impl Generator {
 	fn value(self) -> Box<dyn GeneratorT> {
 		match self {
-			Generator::DockerCompose(output_dir) => Box::new(DockerCompose { output_dir }),
-			Generator::DockerComposeDiscover(output_file) => {
+			Generator::DockerCompose {
+				output_dir,
+				keystore_read_only,
+			} => Box::new(DockerCompose {
+				output_dir,
+				keystore_read_only,
+			}),
+			Generator::DockerComposeDiscover { output_file } => {
 				Box::new(DockerComposeDiscover { output_file })
 			}
 			Generator::Debug => Box::new(DebugGen),
@@ -63,6 +84,7 @@ trait GeneratorT {
 
 struct DockerCompose {
 	output_dir: PathBuf,
+	keystore_read_only: bool,
 }
 impl GeneratorT for DockerCompose {
 	fn library_modules(&self) -> Vec<String> {
@@ -80,7 +102,16 @@ impl GeneratorT for DockerCompose {
 			empty_image: String,
 			#[typed(rename = "outputRoot")]
 			output_root: String,
+			#[typed(rename = "flags")]
+			flags: Flags,
 		}
+
+		#[derive(Typed)]
+		struct Flags {
+			#[typed(rename = "keystoreReadOnly")]
+			keystore_read_only: bool,
+		}
+
 		Config::into_untyped(Config {
 			empty_image: EMPTY_IMAGE.to_string(),
 			output_root: self
@@ -88,6 +119,9 @@ impl GeneratorT for DockerCompose {
 				.to_str()
 				.ok_or_else(|| runtime_error!("docker compose output is set to non-utf8 path"))?
 				.to_string(),
+			flags: Flags {
+				keystore_read_only: self.keystore_read_only,
+			},
 		})
 		.map(Some)
 	}
@@ -196,28 +230,54 @@ impl GeneratorT for DebugGen {
 }
 
 impl FromStr for Generator {
-	type Err = &'static str;
+	type Err = String;
 
 	fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-		if let Some(file) = s.strip_prefix("docker_compose=") {
-			return Ok(Self::DockerCompose({
-				let mut root = env::current_dir().map_err(|_| "bad cwd")?;
-				root.push(file);
-				root
-			}));
-		} else if let Some(file) = s.strip_prefix("docker_compose_discover=") {
-			return Ok(Self::DockerComposeDiscover({
-				let mut root = env::current_dir().map_err(|_| "bad cwd")?;
-				root.push(file);
-				root
-			}));
-		} else if s == "addressbook" {
+		if s == "addressbook" {
 			return Ok(Self::AddressBook);
 		} else if s == "debug" {
 			return Ok(Self::Debug);
 		}
-		Err("unknown generator")
+
+		let kw = split_generator_params(s)?;
+
+		let root = env::current_dir().map_err(|_| "bad cwd")?;
+
+		if let Some(file) = kw.get("docker_compose") {
+			Ok(Self::DockerCompose {
+				output_dir: root.join(file),
+				keystore_read_only: kw
+					.get("keystore_read_only")
+					.unwrap_or(&"true")
+					.parse()
+					.map_err(|_| "not bool")?,
+			})
+		} else if let Some(file) = kw.get("docker_compose_discover") {
+			Ok(Self::DockerComposeDiscover {
+				output_file: root.join(file),
+			})
+		} else {
+			Err("unknown generator".to_string())
+		}
 	}
+}
+
+fn split_generator_params(s: &str) -> Result<HashMap<&str, &str>, String> {
+	let mut params = HashMap::new();
+
+	for param in s.split(',') {
+		let Some((k, v)) = param.split_once('=') else {
+			return Err(format!("bad generator parameter: {param}"));
+		};
+
+		params.insert(k, v);
+	}
+
+	if params.is_empty() && !s.is_empty() {
+		return Err(format!("bad generator option: {s}"));
+	}
+
+	Ok(params)
 }
 
 #[derive(Parser)]
