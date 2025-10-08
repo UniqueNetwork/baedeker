@@ -5,10 +5,19 @@ use std::{
 	str::FromStr,
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use jrsonnet_cli::{MiscOpts, TlaOpts, TraceOpts};
 use jrsonnet_evaluator::{
-	bail, function::{CallLocation, TlaArg}, gc::GcHashMap, in_description_frame, manifest::JsonFormat, parser::{Source, SourcePath, SourceVirtual}, runtime_error, trace::PathResolver, typed::{NativeFn, Typed}, IStr, ObjValue, ObjValueBuilder, Pending, Result, ResultExt, State, Val
+	bail,
+	function::{CallLocation, TlaArg},
+	gc::GcHashMap,
+	in_description_frame,
+	manifest::JsonFormat,
+	parser::{Source, SourcePath, SourceVirtual},
+	runtime_error,
+	trace::PathResolver,
+	typed::{NativeFn, Typed},
+	IStr, ObjValue, ObjValueBuilder, Pending, Result, ResultExt, State, Val,
 };
 use keystore::SecretBackend;
 use spec_builder::SpecBackend;
@@ -229,6 +238,31 @@ impl FromStr for Generator {
 	}
 }
 
+#[derive(Clone, Copy, Default, ValueEnum)]
+enum CorruptedStorageStrategy {
+	/// Return error when storage decoding fails.
+	#[default]
+	RaiseError,
+
+	/// Use default values from metadata
+	/// with warning about every corrupted storage.
+	UseDefault,
+}
+
+/// Chainql specific settings.
+#[derive(Parser, Clone, Copy)]
+#[clap(next_help_heading = "CHAINQL")]
+struct ChainqlOptions {
+	/// This flag specifies how chainql will handle decoding errors.
+	///
+	/// If you needed the flag, you've found a bug.
+	/// Please contact the developer to fix the storage.
+	///
+	/// There's no guarantee that the chain will start and function correctly with corrupted data.
+	#[arg(long, value_enum, default_value_t)]
+	corrupted_storage_strategy: CorruptedStorageStrategy,
+}
+
 #[derive(Parser)]
 #[command(about)]
 struct Opts {
@@ -237,18 +271,20 @@ struct Opts {
 	/// Where and how to store secrets.
 	///
 	/// Available values: file.
-	#[arg(long, default_value = "SecretBackend::Unset")]
+	#[arg(long, default_value = "unset")]
 	secret: SecretBackend,
 	/// How to build specs.
 	///
 	/// Available values: docker.
-	#[arg(long, default_value = "SpecBackend::Unset")]
+	#[arg(long, default_value = "unset")]
 	spec: SpecBackend,
 	/// Which type of output this generator should produce.
 	///
 	/// Available values: docker_compose, addressbook, debug.
 	#[arg(long)]
 	generator: Vec<Generator>,
+	#[command(flatten)]
+	chainql: ChainqlOptions,
 	#[command(flatten)]
 	import: MiscOpts,
 	#[command(flatten)]
@@ -305,7 +341,16 @@ fn main_jrsonnet(opts: Opts) -> Result<()> {
 	sb.import_resolver(opts.import.import_resolver());
 	sb.context_initializer((
 		jrsonnet_stdlib::ContextInitializer::new(PathResolver::new_cwd_fallback()),
-		chainql_core::CqlContextInitializer::default(),
+		chainql_core::CqlContextInitializer::new(
+			None,
+			Some(chainql_core::ChainOpts {
+				use_default_for_corrupted_storages: Some(matches!(
+					opts.chainql.corrupted_storage_strategy,
+					CorruptedStorageStrategy::UseDefault
+				)),
+				..Default::default()
+			}),
+		),
 		library::BdkContextInitializer {
 			spec_builder: Rc::new(opts.spec),
 			secrets: Rc::new(opts.secret),
