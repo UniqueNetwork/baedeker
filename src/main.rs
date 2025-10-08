@@ -14,8 +14,17 @@ use keystore::SecretBackend;
 use spec_builder::SpecBackend;
 use std::rc::Rc;
 use tokio::runtime::Handle;
-use tracing::{debug, error, info};
-use tracing_subscriber::EnvFilter;
+use tracing::{debug, error, info, Level};
+use tracing_indicatif::{
+	filter::{hide_indicatif_span_fields, IndicatifFilter},
+	IndicatifLayer,
+};
+use tracing_subscriber::{
+	fmt::{format::DefaultFields, writer::MakeWriterExt},
+	layer::SubscriberExt,
+	util::SubscriberInitExt,
+	Layer,
+};
 
 use crate::docker::EMPTY_IMAGE;
 
@@ -458,9 +467,18 @@ fn main_jrsonnet(opts: Opts) -> Result<()> {
 }
 
 fn main_sync() {
-	tracing_subscriber::fmt()
-		.without_time()
-		.with_env_filter(EnvFilter::from_default_env())
+	let indicatif_layer = IndicatifLayer::new()
+		.with_span_field_formatter(hide_indicatif_span_fields(DefaultFields::new()));
+
+	tracing_subscriber::registry()
+		.with(
+			tracing_subscriber::fmt::layer().without_time().with_writer(
+				indicatif_layer
+					.get_stderr_writer()
+					.with_max_level(Level::INFO),
+			),
+		)
+		.with(indicatif_layer.with_filter(IndicatifFilter::new(false)))
 		.init();
 
 	let opts = Opts::parse();
